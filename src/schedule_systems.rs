@@ -16,6 +16,13 @@ use ggrs::{
     Config, GgrsError, GgrsRequest, P2PSession, SessionState, SpectatorSession, SyncTestSession,
 };
 
+/// Frames a P2P session that is behind (it joined a running session late) may run beyond the
+/// fixed timestep in one update to catch up.
+const MAX_CATCHUP_FRAMES: usize = 30;
+/// How far behind the other peers a session may be before it catches up: about the network
+/// latency, which a session that keeps up shows too.
+const CATCHUP_THRESHOLD: usize = 2;
+
 pub(crate) fn run_ggrs_schedules<T: Config>(world: &mut World) {
     let framerate: usize = **world.get_resource_or_insert_with::<RollbackFrameRate>(default);
 
@@ -77,6 +84,23 @@ pub(crate) fn run_ggrs_schedules<T: Config>(world: &mut World) {
                 world.insert_resource(MaxPredictionWindow(8));
             }
         }
+    }
+
+    // a session that joined late catches up on its confirmed inputs, as fast as it can
+    for _ in 0..MAX_CATCHUP_FRAMES {
+        let catching_up = matches!(
+            world.get_resource::<Session<T>>(),
+            Some(Session::P2P(s)) if s.current_state() == SessionState::Running
+                && s.frames_behind() > CATCHUP_THRESHOLD
+                && s.confirmed_frame() >= s.current_frame()
+        );
+        if !catching_up {
+            break;
+        }
+        let Some(Session::P2P(session)) = world.remove_resource::<Session<T>>() else {
+            unreachable!("a P2P session was just found");
+        };
+        run_p2p(world, session);
     }
 
     world.insert_resource(GgrsFrameTiming::new(fps_delta, time_data.accumulator));

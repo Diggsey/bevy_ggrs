@@ -20,7 +20,8 @@ bevy = { version = "0.20", default-features = false, features = ["bevy_log"] }
 instant = { version = "0.1", optional = true }
 log = "0.4"
 #ggrs = { version = "0.13.0", features = ["sync-send"] }
-ggrs = { git = "https://github.com/gschup/ggrs", features = ["sync-send"] }
+# Late join (gschup/ggrs has no release with it yet)
+ggrs = { git = "https://github.com/Diggsey/ggrs", rev = "96dca4c90a336ca6e917fa54e44a3725a3404c08", features = ["sync-send"] }
 seahash = "4.1"
 disqualified = "1.0.0"
 serde = { version = "1", default-features = false }
