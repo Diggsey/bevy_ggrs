@@ -78,7 +78,9 @@ impl EntitySnapshotPlugin {
                     entity_map.insert(current_entity, old_entity);
                 }
                 (Some(current_entity), None) => {
-                    commands.entity(current_entity).despawn();
+                    // An entity whose despawn takes others with it (a relationship target with
+                    // `linked_spawn`) may already have taken this one.
+                    commands.entity(current_entity).try_despawn();
                 }
                 (None, Some(old_entity)) => {
                     let current_entity = commands.spawn((rollback, Rollback)).id();

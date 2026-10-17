@@ -1,9 +1,12 @@
 #[allow(dead_code)]
 mod common;
+use bevy::log::tracing::{Event, Level, Metadata, Subscriber, span};
 use bevy::{platform::collections::HashMap, prelude::*, time::TimeUpdateStrategy};
 use bevy_ggrs::*;
 use common::{GgrsConfig, synctest_session};
 use core::time::Duration;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Reflect, Component, Default)]
 struct ChildEntity;
@@ -179,4 +182,79 @@ fn hierarchy() {
         parent_query.single(app.world()).is_ok(),
         "Parent doesn't exist"
     );
+}
+
+/// A parent and child spawned in the rollback schedule are despawned again by every rollback to
+/// before their spawn. Despawning the parent takes the child with it (`Children` is a linked
+/// relationship), and the rollback's own despawn of the child must not then fail.
+#[test]
+fn rollback_despawns_a_hierarchy_spawned_mid_session() {
+    fn spawn_family(mut commands: Commands, counter: Res<FrameCounter>) {
+        if counter.0 == 5 {
+            commands.spawn((ParentEntity, Rollback)).with_children(|p| {
+                for _ in 0..10 {
+                    p.spawn((ChildEntity, Rollback));
+                }
+            });
+        }
+    }
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins)
+        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(
+            1.0 / 60.0,
+        )))
+        .add_plugins(TransformPlugin)
+        .init_resource::<FrameCounter>()
+        .insert_resource(synctest_session(2))
+        .add_plugins(GgrsPlugin::<GgrsConfig>::default())
+        .add_systems(ReadInputs, common::input_system)
+        .rollback_component_with_reflect::<ParentEntity>()
+        .rollback_component_with_reflect::<ChildEntity>()
+        .rollback_resource_with_reflect::<FrameCounter>()
+        .add_systems(GgrsSchedule, (frame_counter, spawn_family).chain());
+
+    // A command that fails (despawning an entity already gone) logs a warning.
+    let warnings = WarningCounter::default();
+    let count = warnings.0.clone();
+    bevy::log::tracing::subscriber::with_default(warnings, || {
+        for _ in 0..20 {
+            app.update();
+        }
+    });
+    assert_eq!(count.load(Ordering::Relaxed), 0, "warnings were logged");
+
+    let parents = app
+        .world_mut()
+        .query::<&ParentEntity>()
+        .iter(app.world())
+        .count();
+    let children = app
+        .world_mut()
+        .query::<(&ChildEntity, &ChildOf)>()
+        .iter(app.world())
+        .count();
+    assert_eq!((parents, children), (1, 10));
+}
+
+/// Counts the warnings (and errors) logged.
+#[derive(Default)]
+struct WarningCounter(Arc<AtomicUsize>);
+
+impl Subscriber for WarningCounter {
+    fn enabled(&self, _: &Metadata<'_>) -> bool {
+        true
+    }
+    fn new_span(&self, _: &span::Attributes<'_>) -> span::Id {
+        span::Id::from_u64(1)
+    }
+    fn record(&self, _: &span::Id, _: &span::Record<'_>) {}
+    fn record_follows_from(&self, _: &span::Id, _: &span::Id) {}
+    fn event(&self, event: &Event<'_>) {
+        if *event.metadata().level() <= Level::WARN {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+    fn enter(&self, _: &span::Id) {}
+    fn exit(&self, _: &span::Id) {}
 }
