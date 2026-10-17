@@ -84,6 +84,6 @@ fn a_late_joiner_catches_up() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(session(&mut joiner).current_state(), SessionState::Running);
     let behind = frame(&host) - frame(&joiner);
     assert!(behind <= 4, "the joiner is {behind} frames behind");
-    assert!(session(&mut joiner).frames_behind() <= 4);
+    assert!(session(&mut joiner).frames_behind().is_some_and(|b| b <= 4));
     Ok(())
 }

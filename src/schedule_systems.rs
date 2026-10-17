@@ -19,9 +19,8 @@ use ggrs::{
 /// Frames a P2P session that is behind (it joined a running session late) may run beyond the
 /// fixed timestep in one update to catch up.
 const MAX_CATCHUP_FRAMES: usize = 30;
-/// How far behind the other peers a session may be before it catches up: about the network
-/// latency, which a session that keeps up shows too.
-const CATCHUP_THRESHOLD: usize = 2;
+/// How far behind the other peers a session may be before it catches up.
+const CATCHUP_THRESHOLD: usize = 1;
 
 pub(crate) fn run_ggrs_schedules<T: Config>(world: &mut World) {
     let framerate: usize = **world.get_resource_or_insert_with::<RollbackFrameRate>(default);
@@ -86,13 +85,15 @@ pub(crate) fn run_ggrs_schedules<T: Config>(world: &mut World) {
         }
     }
 
-    // a session that joined late catches up on its confirmed inputs, as fast as it can
+    // A session that joined late catches up as fast as it can. The inputs it has are as old as
+    // the network is slow, so like the other peers it predicts the last few frames, short of
+    // the prediction window.
     for _ in 0..MAX_CATCHUP_FRAMES {
         let catching_up = matches!(
             world.get_resource::<Session<T>>(),
             Some(Session::P2P(s)) if s.current_state() == SessionState::Running
-                && s.frames_behind() > CATCHUP_THRESHOLD
-                && s.confirmed_frame() >= s.current_frame()
+                && s.frames_behind().is_some_and(|b| b > CATCHUP_THRESHOLD)
+                && s.current_frame() - s.confirmed_frame() < s.max_prediction() as i32 - 1
         );
         if !catching_up {
             break;
